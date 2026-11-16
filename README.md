@@ -58,10 +58,10 @@ differential fuzzing against stock marked.
 - Differential fuzzing vs stock marked 18.1.3: **0 diffs in 14,000**
   random cases (inline-heavy and email/URL/underscore-heavy pools).
 - Timing (same machine, same method, median of runs after warmup):
-  marked baseline ~790 ms, this entry ~598 ms over the 720 practice
+  marked baseline ~790 ms, this entry ~609 ms over the 720 practice
   cases — about **1.3× faster** locally. The leader board's top 20 sit
-  near 2× marked, so this is not yet comfortably in the top 20; it is a
-  correct, meaningfully faster drop-in.
+  near 1.6–1.9× marked, so this is not yet comfortably in the top 20; it
+  is a correct, meaningfully faster drop-in.
 
 ## Reproduce
 
