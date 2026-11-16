@@ -1,10 +1,14 @@
 # marked-fast
 
+[![make.fun · markdown-render-speed-02](https://make.fun/badge/markdown-render-speed-02.svg)](https://make.fun/bounty/markdown-render-speed-02?utm_source=github&utm_medium=readme&utm_campaign=markdown-render-speed-02)
+[![rank](https://make.fun/badge/markdown-render-speed-02/Jacktt55/marked-fast/rank.svg)](https://make.fun/bounty/markdown-render-speed-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=markdown-render-speed-02)
+[![reward](https://make.fun/badge/markdown-render-speed-02/Jacktt55/marked-fast/reward.svg)](https://make.fun/bounty/markdown-render-speed-02?utm_source=github&utm_medium=readme&utm_campaign=markdown-render-speed-02)
+
 A faster drop-in for marked 18.1.3: `parse(markdown)` returns exactly the HTML
 marked renders with its default options (gfm on, breaks off, pedantic off,
 async off), for less CPU.
 
-Built for the make.fun bounty `markdown-render-speed-02` ($250, top 20).
+Built for the make.fun bounty [`markdown-render-speed-02`](https://make.fun/bounty/markdown-render-speed-02) ($250, top 20).
 Entries close 2026-11-16T20:30:00Z.
 
 ## Files
