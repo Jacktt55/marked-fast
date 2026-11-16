@@ -335,7 +335,8 @@ function escapeHtmlEntities(html2, encode) {
 }
 __name(escapeHtmlEntities, "escapeHtmlEntities");
 function decodeNumericCharacterReferences(text) {
-  if (!other.numericCharacterReference.test(text)) {
+  // fast pre-filter: no "&#" means no numeric character reference at all
+  if (!text.includes("&#") || !other.numericCharacterReference.test(text)) {
     return text;
   }
   return text.replace(other.numericCharacterReferenceOrAmpersand, (ref, dec, hex) => {
@@ -1459,7 +1460,35 @@ var plainInlineText = /[\\<\[!*_`~&@]|www\.|:\/\/|mailto:|xmpp:| {2,}\n/;
 var simpleInlineText = /^(`+|~+|[^`~])(?:(?=[`~])|(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|$)|[^ ](?= {2,}\n)))/;
 var urlish = /www\.|:\/\/|mailto:|xmpp:|@/;
 function isUrlStart(s) {
-  if (/^(?:www\.|https?:\/\/|ftp:\/\/|mailto:|xmpp:)/i.test(s)) return true;
+  // manual prefix check for www. / http(s):// / ftp:// / mailto: / xmpp:
+  // (case-insensitive), replacing a regex test that ran at every text run
+  const c0 = s.charCodeAt(0);
+  if (c0 === 119 || c0 === 87) {
+    // w: www.
+    if (s.charCodeAt(1) === 119 || s.charCodeAt(1) === 87) {
+      const c2 = s.charCodeAt(2);
+      if ((c2 === 119 || c2 === 87) && s.charCodeAt(3) === 46) return true;
+    }
+  } else if (c0 === 104 || c0 === 72) {
+    // h: http:// or https://
+    const c1 = s.charCodeAt(1), c2 = s.charCodeAt(2), c3 = s.charCodeAt(3);
+    if ((c1 === 116 || c1 === 84) && (c2 === 116 || c2 === 84) && (c3 === 112 || c3 === 80)) {
+      if (s.charCodeAt(4) === 58 && s.charCodeAt(5) === 47 && s.charCodeAt(6) === 47) return true;
+      if ((s.charCodeAt(4) === 115 || s.charCodeAt(4) === 83) && s.charCodeAt(5) === 58 && s.charCodeAt(6) === 47 && s.charCodeAt(7) === 47) return true;
+    }
+  } else if (c0 === 102 || c0 === 70) {
+    // f: ftp://
+    const c1 = s.charCodeAt(1), c2 = s.charCodeAt(2);
+    if ((c1 === 116 || c1 === 84) && (c2 === 112 || c2 === 80) && s.charCodeAt(3) === 58 && s.charCodeAt(4) === 47 && s.charCodeAt(5) === 47) return true;
+  } else if (c0 === 109 || c0 === 77) {
+    // m: mailto:
+    const c1 = s.charCodeAt(1), c2 = s.charCodeAt(2), c3 = s.charCodeAt(3), c4 = s.charCodeAt(4), c5 = s.charCodeAt(5);
+    if ((c1 === 97 || c1 === 65) && (c2 === 105 || c2 === 73) && (c3 === 108 || c3 === 76) && (c4 === 116 || c4 === 84) && (c5 === 111 || c5 === 79) && s.charCodeAt(6) === 58) return true;
+  } else if (c0 === 120 || c0 === 88) {
+    // x: xmpp:
+    const c1 = s.charCodeAt(1), c2 = s.charCodeAt(2), c3 = s.charCodeAt(3);
+    if ((c1 === 109 || c1 === 77) && (c2 === 112 || c2 === 80) && (c3 === 112 || c3 === 80) && s.charCodeAt(4) === 58) return true;
+  }
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
     if (c === 64) return true;
@@ -1476,6 +1505,63 @@ function endsWithDoubleBlank(s) {
   while (i > 0 && (s.charCodeAt(i - 1) === 32 || s.charCodeAt(i - 1) === 9)) i--;
   return i > 0 && s.charCodeAt(i - 1) === 10;
 }
+
+// ---------------------------------------------------------------------------
+// Block-tokenizer dispatch helpers.
+//
+// blockTokens tries a dozen regex tokenizers at every block, most of which
+// fail on the first character. These helpers answer, with a few char checks,
+// whether a tokenizer could possibly match, so the failing regex execs are
+// skipped. Every helper states a NECESSARY condition only: when it says no,
+// the regex could not match; when it says yes, the regex still decides.
+// ---------------------------------------------------------------------------
+// Is the second line of src a GFM table delimiter row? Necessary condition:
+// after at most three spaces it holds only | : - space tab, with at least
+// one '-'. (The delimiter pattern itself uses only those characters.)
+function secondLineIsTableDelimiter(src) {
+  const nl = src.indexOf("\n");
+  if (nl === -1) return false;
+  let j = nl + 1;
+  let sp = 0;
+  while (sp < 3 && j + sp < src.length && src.charCodeAt(j + sp) === 32) sp++;
+  j += sp;
+  let hasDash = false;
+  for (let k = j; k < src.length; k++) {
+    const c = src.charCodeAt(k);
+    if (c === 10) break;
+    if (c === 45) { hasDash = true; continue; }
+    if (c === 124 || c === 58 || c === 32 || c === 9) continue;
+    return false;
+  }
+  return hasDash;
+}
+// Does a setext underline (a line of only '=' or only '-', after at most
+// three spaces, then only spaces/tabs) occur on some line before the first
+// blank line? Necessary condition only; the lheading regex decides.
+function hasSetextUnderline(src) {
+  let i = src.indexOf("\n");
+  while (i !== -1) {
+    let j = i + 1;
+    if (j >= src.length) return false;
+    // a blank line ends the paragraph extent: no underline past it
+    let k = j;
+    while (k < src.length && (src.charCodeAt(k) === 32 || src.charCodeAt(k) === 9)) k++;
+    if (k >= src.length || src.charCodeAt(k) === 10) return false;
+    let sp = 0;
+    while (sp < 3 && j + sp < src.length && src.charCodeAt(j + sp) === 32) sp++;
+    const c = src.charCodeAt(j + sp);
+    if (c === 61 || c === 45) {
+      let m = j + sp + 1;
+      while (m < src.length && src.charCodeAt(m) === c) m++;
+      let e = m;
+      while (e < src.length && (src.charCodeAt(e) === 32 || src.charCodeAt(e) === 9)) e++;
+      if (e >= src.length || src.charCodeAt(e) === 10) return true;
+    }
+    i = src.indexOf("\n", j);
+  }
+  return false;
+}
+
 var _Lexer = class __Lexer {
   static {
     __name(this, "_Lexer");
@@ -1580,7 +1666,32 @@ var _Lexer = class __Lexer {
       })) {
         continue;
       }
-      if (token = this.tokenizer.space(src)) {
+      // First-char dispatch for the block tokenizers: every one of them is
+      // anchored and can only match when the block starts with a specific
+      // character (after at most three spaces of indent). The flags below
+      // are necessary conditions only, so a skipped tokenizer could not
+      // have matched; paragraph and text always run as the fallbacks.
+      let indent = 0;
+      while (indent < src.length && src.charCodeAt(indent) === 32) indent++;
+      const f = indent < src.length ? src.charCodeAt(indent) : -1;
+      const isBlockCodeStart = indent >= 4 || f === 9;
+      let canSpace = true;
+      {
+        let i = 0;
+        while (i < src.length && (src.charCodeAt(i) === 32 || src.charCodeAt(i) === 9)) i++;
+        canSpace = i >= src.length || src.charCodeAt(i) === 10;
+      }
+      const canCode = (indent >= 4 && f !== -1 && f !== 10) || (f === 9 && indent + 1 < src.length && src.charCodeAt(indent + 1) !== 10);
+      const canFences = f !== 9 && indent <= 3 && (f === 96 || f === 126);
+      const canHeading = f === 35 && indent <= 3;
+      const canHr = f !== 9 && indent <= 3 && (f === 45 || f === 95 || f === 42);
+      const canBlockquote = f !== 9 && indent <= 3 && f === 62;
+      const canList = f !== 9 && indent <= 3 && (f === 42 || f === 43 || f === 45 || (f >= 48 && f <= 57));
+      const canHtml = f !== 9 && indent <= 3 && f === 60;
+      const canDef = f !== 9 && indent <= 3 && f === 91;
+      const canTable = f !== -1 && f !== 10 && secondLineIsTableDelimiter(src);
+      const canLheading = !isBlockCodeStart && hasSetextUnderline(src);
+      if (canSpace && (token = this.tokenizer.space(src))) {
         src = src.substring(token.raw.length);
         const lastToken = tokens.at(-1);
         if (token.raw.length === 1 && lastToken !== void 0) {
@@ -1590,7 +1701,7 @@ var _Lexer = class __Lexer {
         }
         continue;
       }
-      if (token = this.tokenizer.code(src)) {
+      if (canCode && (token = this.tokenizer.code(src))) {
         src = src.substring(token.raw.length);
         const lastToken = tokens.at(-1);
         if (lastToken?.type === "paragraph" || lastToken?.type === "text") {
@@ -1602,37 +1713,37 @@ var _Lexer = class __Lexer {
         }
         continue;
       }
-      if (token = this.tokenizer.fences(src)) {
+      if (canFences && (token = this.tokenizer.fences(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.heading(src)) {
+      if (canHeading && (token = this.tokenizer.heading(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.hr(src)) {
+      if (canHr && (token = this.tokenizer.hr(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.blockquote(src)) {
+      if (canBlockquote && (token = this.tokenizer.blockquote(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.list(src)) {
+      if (canList && (token = this.tokenizer.list(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.html(src)) {
+      if (canHtml && (token = this.tokenizer.html(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.def(src)) {
+      if (canDef && (token = this.tokenizer.def(src))) {
         src = src.substring(token.raw.length);
         const lastToken = tokens.at(-1);
         if (lastToken?.type === "paragraph" || lastToken?.type === "text") {
@@ -1650,12 +1761,12 @@ var _Lexer = class __Lexer {
         }
         continue;
       }
-      if (token = this.tokenizer.table(src)) {
+      if (canTable && (token = this.tokenizer.table(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;
       }
-      if (token = this.tokenizer.lheading(src)) {
+      if (canLheading && (token = this.tokenizer.lheading(src))) {
         src = src.substring(token.raw.length);
         tokens.push(token);
         continue;

@@ -13,9 +13,12 @@ Entries close 2026-11-16T20:30:00Z.
   Dependency-free ES module; exports `parse(markdown)`. See `NOTICE` and
   `LICENSE-marked` for marked's licence (MIT).
 - `main.ts` — the driver the harness runs. Reads `cases.json` from
-  `$MAKEFUN_INPUT_DIR` (or `/input`), renders each case alone with `parse`,
+  `$MAKEFUN_INPUT_DIR` (or `/input`), validates that it is a list of cases
+  with a `markdown` string each, renders each case alone with `parse`,
   writes the HTML strings in case order to `html.json` in
-  `$MAKEFUN_OUTPUT_DIR` (or `/output`).
+  `$MAKEFUN_OUTPUT_DIR` (or `/output`). A malformed input fails loudly
+  instead of producing a short or misordered answer file.
+- `package.json` — module metadata (`"type": "module"`, Node >= 22).
 - `LICENSE` — this entry's MIT licence. `LICENSE-marked` / `NOTICE` —
   marked's licence and vendoring notice, kept as required for a fork.
 
@@ -35,6 +38,11 @@ differential fuzzing against stock marked.
   small set of first characters. This also fixes two subtleties the naive
   dispatch would miss: `br` matches a backslash before a newline, and the
   `url` (email) rule can start with `_`, `.`, `+` or `-`.
+- **First-char block dispatch.** The block tokeniser loop does the same:
+  each block tokenizer is guarded by a necessary first-character condition
+  (indent, first non-space character, and — for table and setext heading —
+  a manual check of the following lines), so the failing regex execs are
+  skipped. Paragraph and text always run as the fallbacks.
 - **Two-tier text regex.** Most inline sources contain no `www.`, URL or
   email construct, so they use a simplified text regex without the
   lookbehind and email lookaheads (verified equivalent on urlish-free
@@ -49,19 +57,34 @@ differential fuzzing against stock marked.
   document defines no links; the escape/code mask is skipped when the
   source has no backslash or backtick; the link/code/HTML mask is skipped
   when the source has no `[`, backtick or `<`.
+- **Manual URL-start check.** `isUrlStart` tests the `www.` / `http(s)://` /
+  `ftp://` / `mailto:` / `xmpp:` prefixes by character code instead of a
+  regex test at every text run.
 - **Guarded carriage-return normalisation.** The `\r` replace in `lex()`
   is skipped when the input has no carriage return.
+- **Entity pre-filter.** `decodeNumericCharacterReferences` first checks
+  for `"&#"` with a native substring search before running its regex test.
+
+Two things were tried and deliberately left out, because measurement showed
+they do not help on this workload: a hand-written inline-text scanner
+(char-by-char, and a hybrid that jumps with a native regex search) is
+slower than V8's regex for the text rule, and the per-call `indexOf`
+precomputation it needs eats the saving. The differential test harnesses
+for both are kept in `bench/textscan.mjs` and `bench/textscan2.mjs`
+(outside the repo).
 
 ## Verification (local, practice set)
 
 - Kit scorer: **720/720** cases byte-identical (`program/scorer/main.ts`).
 - Differential fuzzing vs stock marked 18.1.3: **0 diffs in 14,000**
-  random cases (inline-heavy and email/URL/underscore-heavy pools).
+  random cases (inline-heavy and email/URL/underscore-heavy pools), plus
+  **0 mismatches in 240,000** targeted and random strings for the text-rule
+  scanner experiments.
 - Timing (same machine, same method, median of runs after warmup):
-  marked baseline ~790 ms, this entry ~609 ms over the 720 practice
-  cases — about **1.3× faster** locally. The leader board's top 20 sit
-  near 1.6–1.9× marked, so this is not yet comfortably in the top 20; it
-  is a correct, meaningfully faster drop-in.
+  marked baseline ~790–800 ms, this entry ~570–630 ms over the 720
+  practice cases — about **1.3–1.4× faster** locally. The leader board's
+  top 20 sit near 1.8× marked, so this is not yet in the top 20; it is a
+  correct, meaningfully faster drop-in.
 
 ## Reproduce
 
@@ -72,6 +95,6 @@ node rig/driver.mjs /path/to/parse.js 3   # renders, writes html.json
 # MAKEFUN_SCORES_DIR set to the rig output, the kit reference and a scores dir
 ```
 
-Repo total is ~108 KB, well under the 1 MiB cap. No install step, no
+Repo total is ~120 KB, well under the 1 MiB cap. No install step, no
 WebAssembly, no native addons, no prebuilt binaries, no caching between
 cases, deterministic (two runs byte-identical).
